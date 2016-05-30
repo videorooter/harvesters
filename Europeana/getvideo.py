@@ -1,14 +1,21 @@
+#! /usr/bin/python3
 #-*- coding: utf-8 -*-
 # encoding=utf8   
-import sys, requests, json, csv, re, os, time, pycurl, StringIO, simplejson, time, urllib
-import config
-reload(sys)  
-sys.setdefaultencoding('utf8')
+import sys, json, csv, re, os, time, time, urllib
+import urllib.error
+import urllib.parse
+import requests
+from urllib.request import urlopen
+import configparser
 
 gatherDataprovider = True
 gather = True
 
-key = config.api_key
+config = configparser.ConfigParser()
+config.read('europeana.conf')
+
+key = config['europeana']['api_key']
+
 #key = "api2demo"
 api = "http://www.europeana.eu/api/v2/search.json?"
 
@@ -41,66 +48,50 @@ urlPattern = re.compile(
 def getResults(url, cursor, total):
 	results = []
 	count = 0
-	attempts = 12 
 	while cursor != False:
-		
 		try:
+			attempts = 12
 			start = time.time()
-			result = requests.get(url + cursor)
-			result.content
+			response = requests.get(url + cursor)
 			roundtrip = time.time() - start
-			if result.status_code != 200:
-				if attempts > 1:
-					print "Did not receive proper response(" + str(result.status_code) + "), waiting for 5 seconds to try again"
-					time.sleep(5)
-					attempts = attempts - 1
-				else:
-					print "Did not receive proper response(" + str(result.status_code) + ") over a minute. stopping querying..."
-					print "problematic query: " + url + cursor
-					return -1
+			print('processing: %i of %i (%s)' % (count, total, str(roundtrip)))
+			result = response.json()
+			if 'nextCursor' in result:
+				cursor = '&cursor=' + urllib.parse.quote(result['nextCursor'], safe='')
+				count = count + 100
 			else:
-				attempts = 12 
-				print 'processing: ' + str(count) + " of " + total + "(" + str(roundtrip) + ")..."
-				result = result.json()
-				if 'nextCursor' in result:
-					cursor = '&cursor=' + urllib.quote(result['nextCursor'], safe='')
-					count = count + 100
+				if count+100 > total:
+					print ("No new cursor found.", url + cursor)
 				else:
-					if count+100 > total:
-						print ("No new cursor found.", url + cursor)
-					else:
-						print ("No new cursor found. Natural end of query reached.")
-					cursor = False
-				results = results + processSet(result)
-		except requests.ConnectionError, e:
-			print ('Connection Error', unicode(url, 'utf-8') + cursor, str(sys.exc_info()[0]), str(e))
+					print ("No new cursor found. Natural end of query reached.")
+				cursor = False
+			results = results + processSet(result)
+		except (urllib.error.HTTPError, ValueError, requests.exceptions.ChunkedEncodingError) as e:
+			print("Query returned invalid data: %s%s (%s)" % (url, cursor, repr(e)))
+			if attempts > 1:
+				time.sleep(5)
+				attempts = attempts - 1
+			else:
+				print("Giving up!")
+				return -1
+		except requests.ConnectionError as e:
+			print ('Connection Error', url + cursor, str(sys.exc_info()[0]), str(e))
 			return []
-		except simplejson.scanner.JSONDecodeError, e:
-			print ('Decoding Error', unicode(url, 'utf-8') + cursor, str(sys.exc_info()[0]), str(e))
-			print 'Dumping result...'
-			print str(result)
+		except UnicodeDecodeError as e:
+			print ('Encoding exception', url + cursor, str(sys.exc_info()[0]), str(e))
 			return []
-		except UnicodeDecodeError, e:
-			print ('Encoding exception', unicode(url, 'utf-8') + cursor, str(sys.exc_info()[0]), str(e))
-			return []
-		
 	return results
 	
 def getTotal(url):
-	print "Getting total..."
+	print("Getting total...")
 	try:
-		result = requests.get(url)
-		result = result.json()
+		response = requests.get(url)
+		result = response.json()
 		return result['totalResults']
-	except simplejson.scanner.JSONDecodeError, e:
-		print ('Decoding Error', url, str(sys.exc_info()[0]), str(e))
-		print 'Dumping result...'
-		print str(result)
-		return []
-	except Exception, e:
+	except Exception as e:
 		print ('Failed to retrieve total', url, str(sys.exc_info()[0]), str(e))
-		print 'Dumping result...'
-		print str(result)
+		print ('Dumping result...')
+		print (str(result))
 		return []
 
 def processSet(set):
@@ -112,7 +103,7 @@ def processSet(set):
 		for item in items:
 			result = {}
 			if item['id'] in ids:
-				print "double: http://www.europeana.eu/portal/record" + item['id'] + ".html"
+				print("double: http://www.europeana.eu/portal/record%s.html" % item['id'])
 				continue
 			else: 
 				ids.append(item['id'])
@@ -128,7 +119,7 @@ def processSet(set):
 			if urlPattern.match(item['edmIsShownBy'][0]) is not None:
 				result['source_url'] = item['edmIsShownBy'][0]
 			else:
-				print 'missing url, skipping ' + item['id']
+				print('missing url, skipping %s' % item['id'])
 				continue
 			result['rights_statement'] = item['rights'][0]
 			#result['source'] = "http://www.europeana.eu/portal/record" + item['id'] + ".html"
@@ -153,17 +144,17 @@ def processSet(set):
 
 data = []
 
-print 'Starting Querying...'
-total = str(getTotal(unicode(api+query, 'utf-8') + '&cursor=*'))
-print "Total: " + total
+print('Starting Querying...')
+total = getTotal(api+query+ '&cursor=*')
+print("Total: %i" % total)
 data = data + getResults(api+query,'&cursor=*', total)
 if data != []:
-	print 'Query completed.'
-print 'Trying to store Data...'
+	print('Query completed.')
+print('Trying to store Data...')
 try:
 	with open('output.json', 'w') as outfile:
 		json.dump(data, outfile)
 	outfile.close()
-	print 'Data written to json'
+	print('Data written to json')
 except:
-	print "ERROR: Storage of result failed."
+	print("ERROR: Storage of result failed.")
