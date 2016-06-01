@@ -1,4 +1,4 @@
-#! /usr/bin/python3
+#! /usr/bin/env python3
 #-*- coding: utf-8 -*-
 # encoding=utf8   
 import sys, json, csv, re, os, time, time, urllib
@@ -107,7 +107,7 @@ def processSet(set):
 				continue
 			else: 
 				ids.append(item['id'])
-			#result['id'] = 'europeana_' + item['id'].replace('/','__')
+			result['id'] = 'europeana_' + item['id'].replace('/','__')
 			''' NO LINK TO INSTITUTION NECCESARY?
 			result['institution_link'] = ""
 			if 'edmIsShownAt' in item:
